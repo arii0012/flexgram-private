@@ -1,5 +1,5 @@
 
-module nova-messenger/backend
+module flexgram-private/backend
 
 go 1.23
 
