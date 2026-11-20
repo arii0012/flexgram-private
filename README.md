@@ -124,3 +124,22 @@ flutter build windows --release
 ## Лицензия
 
 MIT
+
+## Автосборка на GitHub
+
+При каждом пуше в `main` GitHub Actions автоматически:
+
+1. Собирает Go-сервер (Linux + Windows)
+2. Собирает Android APK
+3. Создаёт **Release** с готовыми файлами для скачивания
+
+### Как пользоваться
+
+1. Запушь код в репозиторий
+2. Открой вкладку **Actions** — увидишь сборку
+3. После успеха открой вкладку **Releases** — там будут:
+   - `flexgram-android.apk`
+   - `flexgram-server-linux`
+   - `flexgram-server-windows.exe`
+
+Можно также запустить сборку вручную: **Actions → Build FlexGram → Run workflow**.
