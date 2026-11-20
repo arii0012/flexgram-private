@@ -1,30 +1,20 @@
-
 FROM golang:1.23-alpine AS builder
 
 WORKDIR /src
+RUN apk add --no-cache ca-certificates git
 
-RUN apk add --no-cache ca-certificates
-
-COPY go.mod ./
-
-RUN go mod download
+COPY go.mod go.sum* ./
+RUN go mod download || true
 
 COPY . .
-
-RUN CGO_ENABLED=0 GOOS=linux go build \
-    -trimpath \
-    -ldflags="-s -w" \
-    -o /out/nova-server ./cmd/server
+RUN go get github.com/gorilla/websocket@v1.5.3
+RUN go mod tidy
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/flexgram-server ./cmd/server
 
 FROM alpine:3.21
-
 RUN apk add --no-cache ca-certificates tzdata
-
 WORKDIR /app
-
-COPY --from=builder /out/nova-server /app/nova-server
-COPY migrations /app/migrations
-
+COPY --from=builder /out/flexgram-server /app/flexgram-server
+COPY internal/database/migrations /app/migrations
 EXPOSE 8080
-
-ENTRYPOINT ["/app/nova-server"]
+ENTRYPOINT ["/app/flexgram-server"]

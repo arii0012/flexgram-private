@@ -2,345 +2,154 @@ package handlers
 
 import (
 	"net/http"
-	"strconv"
-	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"flexgram-private/backend/internal/models"
+	ws "flexgram-private/backend/internal/websocket"
 )
 
 type MessageHandler struct {
-	DB *pgxpool.Pool
+	DB  *pgxpool.Pool
+	Hub *ws.Hub
 }
 
-func NewMessageHandler(db *pgxpool.Pool) *MessageHandler {
-	return &MessageHandler{DB: db}
-}
-
-type Message struct {
-	ID          string     `json:"id"`
-	ChatID      string     `json:"chat_id"`
-	SenderID    *string    `json:"sender_id"`
-	Content     string     `json:"content"`
-	MessageType string     `json:"message_type"`
-	ReplyTo     *string    `json:"reply_to"`
-	EditedAt    *time.Time `json:"edited_at"`
-	DeletedAt   *time.Time `json:"deleted_at"`
-	CreatedAt   time.Time  `json:"created_at"`
+func NewMessageHandler(db *pgxpool.Pool, hub *ws.Hub) *MessageHandler {
+	return &MessageHandler{DB: db, Hub: hub}
 }
 
 func (h *MessageHandler) Send(c *gin.Context) {
 	userID := c.GetString("user_id")
 	chatID := c.Param("chatID")
 
-	if userID == "" || chatID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
-		return
-	}
-
-	var request struct {
+	var req struct {
 		Content     string  `json:"content"`
 		MessageType string  `json:"message_type"`
 		ReplyTo     *string `json:"reply_to"`
 	}
-
-	if err := c.ShouldBindJSON(&request); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+	if err := c.ShouldBindJSON(&req); err != nil || req.Content == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "content required"})
 		return
 	}
-
-	request.Content = strings.TrimSpace(request.Content)
-
-	if request.Content == "" || len(request.Content) > 10000 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid message content"})
-		return
+	if req.MessageType == "" {
+		req.MessageType = "text"
 	}
 
-	if request.MessageType == "" {
-		request.MessageType = "text"
-	}
-
-	if request.MessageType != "text" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Unsupported message type"})
-		return
-	}
-
-	var isMember bool
+	var exists bool
 	err := h.DB.QueryRow(c.Request.Context(), `
-		SELECT EXISTS (
-			SELECT 1 FROM chat_members
-			WHERE chat_id = $1 AND user_id = $2
-		)
-	`, chatID, userID).Scan(&isMember)
-
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check chat membership"})
+		SELECT EXISTS(SELECT 1 FROM chat_members WHERE chat_id = $1 AND user_id = $2)
+	`, chatID, userID).Scan(&exists)
+	if err != nil || !exists {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Not a member of this chat"})
 		return
 	}
 
-	if !isMember {
-		c.JSON(http.StatusForbidden, gin.H{"error": "You are not a member of this chat"})
-		return
-	}
-
-	if request.ReplyTo != nil {
-		var replyExists bool
-
-		err = h.DB.QueryRow(c.Request.Context(), `
-			SELECT EXISTS (
-				SELECT 1 FROM messages
-				WHERE id = $1 AND chat_id = $2 AND deleted_at IS NULL
-			)
-		`, *request.ReplyTo, chatID).Scan(&replyExists)
-
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check reply"})
-			return
-		}
-
-		if !replyExists {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Reply message not found"})
-			return
-		}
-	}
-
-	var message Message
-
+	var msg models.Message
 	err = h.DB.QueryRow(c.Request.Context(), `
-		INSERT INTO messages (
-			chat_id, sender_id, content, message_type, reply_to
-		)
+		INSERT INTO messages (chat_id, sender_id, content, message_type, reply_to)
 		VALUES ($1, $2, $3, $4, $5)
-		RETURNING
-			id, chat_id, sender_id, content, message_type,
-			reply_to, edited_at, deleted_at, created_at
-	`,
-		chatID,
-		userID,
-		request.Content,
-		request.MessageType,
-		request.ReplyTo,
-	).Scan(
-		&message.ID,
-		&message.ChatID,
-		&message.SenderID,
-		&message.Content,
-		&message.MessageType,
-		&message.ReplyTo,
-		&message.EditedAt,
-		&message.DeletedAt,
-		&message.CreatedAt,
+		RETURNING id::text, chat_id::text, sender_id::text, content, message_type, created_at
+	`, chatID, userID, req.Content, req.MessageType, req.ReplyTo).Scan(
+		&msg.ID, &msg.ChatID, &msg.SenderID, &msg.Content, &msg.MessageType, &msg.CreatedAt,
 	)
-
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to send message"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not send message: " + err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusCreated, gin.H{"message": message})
+	_, _ = h.DB.Exec(c.Request.Context(), `UPDATE chats SET updated_at = NOW() WHERE id = $1`, chatID)
+
+	rows, _ := h.DB.Query(c.Request.Context(), `SELECT user_id::text FROM chat_members WHERE chat_id = $1 AND user_id != $2`, chatID, userID)
+	if rows != nil {
+		defer rows.Close()
+		var ids []string
+		for rows.Next() {
+			var uid string
+			if rows.Scan(&uid) == nil {
+				ids = append(ids, uid)
+			}
+		}
+		h.Hub.SendToUsers(ids, "new_message", msg)
+	}
+
+	c.JSON(http.StatusCreated, gin.H{"message": msg})
 }
 
 func (h *MessageHandler) History(c *gin.Context) {
 	userID := c.GetString("user_id")
 	chatID := c.Param("chatID")
 
-	if userID == "" || chatID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
-		return
-	}
-
-	limit := 50
-
-	if value := c.Query("limit"); value != "" {
-		parsed, err := strconv.Atoi(value)
-
-		if err != nil || parsed < 1 || parsed > 100 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Limit must be between 1 and 100"})
-			return
-		}
-
-		limit = parsed
-	}
-
-	var isMember bool
-	err := h.DB.QueryRow(c.Request.Context(), `
-		SELECT EXISTS (
-			SELECT 1 FROM chat_members
-			WHERE chat_id = $1 AND user_id = $2
-		)
-	`, chatID, userID).Scan(&isMember)
-
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check chat membership"})
-		return
-	}
-
-	if !isMember {
-		c.JSON(http.StatusForbidden, gin.H{"error": "You are not a member of this chat"})
+	var exists bool
+	_ = h.DB.QueryRow(c.Request.Context(), `SELECT EXISTS(SELECT 1 FROM chat_members WHERE chat_id = $1 AND user_id = $2)`, chatID, userID).Scan(&exists)
+	if !exists {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Not a member"})
 		return
 	}
 
 	rows, err := h.DB.Query(c.Request.Context(), `
-		SELECT
-			id,
-			chat_id,
-			sender_id,
-			CASE WHEN deleted_at IS NOT NULL THEN '' ELSE content END,
-			message_type,
-			reply_to,
-			edited_at,
-			deleted_at,
-			created_at
-		FROM messages
-		WHERE chat_id = $1
-		ORDER BY created_at DESC
-		LIMIT $2
-	`, chatID, limit)
-
+		SELECT m.id::text, m.chat_id::text, COALESCE(m.sender_id::text,''), m.content, m.message_type,
+		       m.created_at, COALESCE(u.username,''), COALESCE(u.display_name,''), COALESCE(u.avatar_url,'')
+		FROM messages m
+		LEFT JOIN users u ON u.id = m.sender_id
+		WHERE m.chat_id = $1 AND m.deleted_at IS NULL
+		ORDER BY m.created_at DESC
+		LIMIT 100
+	`, chatID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load messages"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "DB error"})
 		return
 	}
 	defer rows.Close()
 
-	messages := make([]Message, 0)
-
+	var messages []models.Message
 	for rows.Next() {
-		var message Message
-
-		if err := rows.Scan(
-			&message.ID,
-			&message.ChatID,
-			&message.SenderID,
-			&message.Content,
-			&message.MessageType,
-			&message.ReplyTo,
-			&message.EditedAt,
-			&message.DeletedAt,
-			&message.CreatedAt,
-		); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read messages"})
-			return
+		var m models.Message
+		var uname, dname, avatar string
+		if err := rows.Scan(&m.ID, &m.ChatID, &m.SenderID, &m.Content, &m.MessageType, &m.CreatedAt, &uname, &dname, &avatar); err != nil {
+			continue
 		}
-
-		messages = append(messages, message)
+		if uname != "" {
+			m.Sender = &models.User{ID: m.SenderID, Username: uname, DisplayName: dname, AvatarURL: avatar}
+		}
+		messages = append(messages, m)
 	}
-
-	if err := rows.Err(); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read messages"})
-		return
+	for i, j := 0, len(messages)-1; i < j; i, j = i+1, j-1 {
+		messages[i], messages[j] = messages[j], messages[i]
 	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"messages": messages,
-		"count":    len(messages),
-	})
+	c.JSON(http.StatusOK, gin.H{"messages": messages})
 }
 
 func (h *MessageHandler) Edit(c *gin.Context) {
 	userID := c.GetString("user_id")
-	messageID := c.Param("messageID")
-
-	if userID == "" || messageID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
-		return
-	}
-
-	var request struct {
+	msgID := c.Param("messageID")
+	var req struct {
 		Content string `json:"content"`
 	}
-
-	if err := c.ShouldBindJSON(&request); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+	if err := c.ShouldBindJSON(&req); err != nil || req.Content == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "content required"})
 		return
 	}
-
-	request.Content = strings.TrimSpace(request.Content)
-
-	if request.Content == "" || len(request.Content) > 10000 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid message content"})
+	tag, err := h.DB.Exec(c.Request.Context(), `
+		UPDATE messages SET content = $1, edited_at = NOW()
+		WHERE id = $2 AND sender_id = $3 AND deleted_at IS NULL
+	`, req.Content, msgID, userID)
+	if err != nil || tag.RowsAffected() == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot edit message"})
 		return
 	}
-
-	var message Message
-
-	err := h.DB.QueryRow(c.Request.Context(), `
-		UPDATE messages
-		SET content = $1, edited_at = NOW()
-		WHERE id = $2
-		  AND sender_id = $3
-		  AND deleted_at IS NULL
-		  AND EXISTS (
-			SELECT 1 FROM chat_members
-			WHERE chat_members.chat_id = messages.chat_id
-			  AND chat_members.user_id = $3
-		  )
-		RETURNING
-			id, chat_id, sender_id, content, message_type,
-			reply_to, edited_at, deleted_at, created_at
-	`, request.Content, messageID, userID).Scan(
-		&message.ID,
-		&message.ChatID,
-		&message.SenderID,
-		&message.Content,
-		&message.MessageType,
-		&message.ReplyTo,
-		&message.EditedAt,
-		&message.DeletedAt,
-		&message.CreatedAt,
-	)
-
-	if err != nil && err.Error() == "no rows in result set" {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Message not found or cannot be edited"})
-		return
-	}
-
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to edit message"})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"message": message})
+	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
 func (h *MessageHandler) Delete(c *gin.Context) {
 	userID := c.GetString("user_id")
-	messageID := c.Param("messageID")
-
-	if userID == "" || messageID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+	msgID := c.Param("messageID")
+	tag, err := h.DB.Exec(c.Request.Context(), `
+		UPDATE messages SET deleted_at = NOW() WHERE id = $1 AND sender_id = $2
+	`, msgID, userID)
+	if err != nil || tag.RowsAffected() == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot delete message"})
 		return
 	}
-
-	var deletedID string
-
-	err := h.DB.QueryRow(c.Request.Context(), `
-		UPDATE messages
-		SET content = '', deleted_at = NOW()
-		WHERE id = $1
-		  AND sender_id = $2
-		  AND deleted_at IS NULL
-		  AND EXISTS (
-			SELECT 1 FROM chat_members
-			WHERE chat_members.chat_id = messages.chat_id
-			  AND chat_members.user_id = $2
-		  )
-		RETURNING id
-	`, messageID, userID).Scan(&deletedID)
-
-	if err != nil && err.Error() == "no rows in result set" {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Message not found or cannot be deleted"})
-		return
-	}
-
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete message"})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"status": "deleted",
-		"id":     deletedID,
-	})
+	c.JSON(http.StatusOK, gin.H{"ok": true})
 }

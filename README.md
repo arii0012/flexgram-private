@@ -1,39 +1,126 @@
-# NovaMessenger
+# FlexGram — Private Messenger
 
-An independent cross-platform messaging application with its own backend.
-This project is not connected to Telegram servers and does not use Telegram accounts.
+Независимый кроссплатформенный мессенджер (приватный клон Telegram).
+Собственный бэкенд, никакой связи с серверами Telegram.
 
-## Planned technology
+## Стек
 
-- Backend: Go, Gin, WebSocket
-- Data: PostgreSQL and Redis
-- Client: Flutter / Dart
-- Deployment: Docker Compose, VPS or a secure tunnel for temporary testing
+- **Backend**: Go + Gin + WebSocket (gorilla/websocket)
+- **DB**: PostgreSQL + Redis
+- **Client**: Flutter (Android / Windows / Web)
 
-## Repository layout
+## Возможности
 
-- `backend/` — Go API and WebSocket server
-- `mobile/` — Flutter application (Android, Windows and Web targets)
-- `docker/` — deployment-related files
-- `docs/` — project documentation
+- Регистрация / логин по username + пароль
+- Личные чаты, поиск пользователей по @username
+- Real-time сообщения через WebSocket
+- Профиль с градиентной шапкой, Premium, галочка верификации
+- Магазин коллекционных подарков + баланс Stars
+- **God Mode** (Developer Panel) — выдача себе Stars, Premium, подарков, любых username
 
-## Initial setup
+## Быстрый старт (сервер)
 
-1. Install Git and Docker Desktop.
-2. Copy `.env.example` to `.env`.
-3. Replace every `REPLACE_WITH_...` value with a long, unique secret.
-4. Never commit or share `.env`.
+```bash
+# 1. Клонировать
+git clone https://github.com/arii0012/flexgram-private.git
+cd flexgram-private
 
-The backend source and Dockerfile will be added in the next project package.
-Do not run `docker compose up` until those files have been supplied.
+# 2. Создать .env
+cp .env.example .env
+# Отредактируйте .env — поставьте длинные пароли и JWT_SECRET
 
-## Security
+# 3. Запустить всё одной командой
+docker compose up -d --build
 
-- Never publish `.env`, database passwords, JWT secrets or private keys.
-- Developer/test features must be authorized by the backend.
-- Do not expose PostgreSQL or Redis ports publicly.
-- Use HTTPS/WSS and firewall rules on a public VPS.
+# Сервер будет на http://localhost:8080
+```
 
-## License
+Проверка:
+```bash
+curl http://localhost:8080/
+```
 
-MIT. Add a `LICENSE` file before publishing if you choose this license.
+## Flutter-клиент
+
+```bash
+cd mobile
+flutter pub get
+
+# Android (эмулятор)
+# В lib/services/auth.dart уже стоит baseUrl = 'http://10.0.2.2:8080'
+flutter run
+
+# Windows
+# Раскомментируйте baseUrl = 'http://localhost:8080' в auth.dart
+flutter run -d windows
+
+# Сборка APK
+flutter build apk --release
+# Файл: build/app/outputs/flutter-apk/app-release.apk
+
+# Сборка Windows EXE
+flutter build windows --release
+```
+
+### Важно для двух устройств
+
+Если хотите, чтобы телефон и ПК писали друг другу:
+
+1. Узнайте IP вашего компьютера в локальной сети (например `192.168.1.50`).
+2. В `mobile/lib/services/auth.dart` поставьте:
+   ```dart
+   static const String baseUrl = 'http://192.168.1.50:8080';
+   ```
+3. В `docker-compose.yml` порты уже проброшены.
+4. Убедитесь, что файрвол разрешает входящие на 8080.
+
+## God Mode
+
+В приложении: меню → **Developer Panel**.
+
+Можно:
+- Накинуть себе любое количество Stars
+- Выдать Premium + галочку
+- Сменить username на короткий (3–4 символа)
+- Выдать себе любой подарок с кастомным номером
+
+## Структура
+
+```
+├── backend/                 # Go сервер
+│   ├── cmd/server/main.go
+│   ├── internal/
+│   │   ├── handlers/        # auth, chats, messages, gifts, god
+│   │   ├── websocket/       # real-time hub
+│   │   ├── models/
+│   │   └── database/migrations/
+│   └── Dockerfile
+├── mobile/                  # Flutter клиент
+│   └── lib/
+│       ├── screens/         # login, home, chat, profile, gifts, god
+│       └── services/        # api + auth
+├── docker-compose.yml
+└── README.md
+```
+
+## API (кратко)
+
+| Method | Path | Описание |
+|--------|------|----------|
+| POST | /api/auth/register | Регистрация |
+| POST | /api/auth/login | Вход |
+| GET  | /api/users/me | Профиль |
+| GET  | /api/users/search?q= | Поиск |
+| POST | /api/chats | Создать чат |
+| GET  | /api/chats | Список чатов |
+| POST | /api/chats/:id/messages | Отправить сообщение |
+| GET  | /api/chats/:id/messages | История |
+| GET  | /api/gifts/shop | Магазин |
+| POST | /api/gifts/buy | Купить подарок |
+| POST | /api/god/stars | Накинуть Stars |
+| POST | /api/god/premium | Premium + verified |
+| GET  | /ws?token=... | WebSocket |
+
+## Лицензия
+
+MIT

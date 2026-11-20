@@ -1,4 +1,3 @@
-
 package config
 
 import (
@@ -16,19 +15,17 @@ type Config struct {
 
 func Load() *Config {
 	_ = godotenv.Load()
-
 	return &Config{
 		Port:        getEnv("PORT", "8080"),
-		DatabaseURL: getEnv("DATABASE_URL", ""),
-		RedisURL:    getEnv("REDIS_URL", "localhost:6379"),
-		JWTSecret:   getEnv("JWT_SECRET", ""),
+		DatabaseURL: getEnv("DATABASE_URL", "postgres://nova_user:password@localhost:5432/nova_messenger?sslmode=disable"),
+		RedisURL:    getEnv("REDIS_URL", "redis://localhost:6379/0"),
+		JWTSecret:   getEnv("JWT_SECRET", "change-me-to-a-long-random-secret-key-32chars"),
 	}
 }
 
 func getEnv(key, fallback string) string {
-	value := os.Getenv(key)
-	if value == "" {
-		return fallback
+	if v := os.Getenv(key); v != "" {
+		return v
 	}
-	return value
+	return fallback
 }

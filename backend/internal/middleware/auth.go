@@ -1,4 +1,3 @@
-
 package middleware
 
 import (
@@ -7,77 +6,40 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/redis/go-redis/v9"
 )
 
-func Auth(secret string, redisClient *redis.Client) gin.HandlerFunc {
+func Auth(secret string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		header := c.GetHeader("Authorization")
-
-		parts := strings.SplitN(header, " ", 2)
-
-		if len(parts) != 2 || parts[0] != "Bearer" {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-				"error": "Authorization required",
-			})
+		if header == "" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Authorization required"})
 			return
 		}
-
-		tokenString := parts[1]
-
-		token, err := jwt.ParseWithClaims(
-			tokenString,
-			&jwt.RegisteredClaims{},
-			func(token *jwt.Token) (interface{}, error) {
-				if token.Method != jwt.SigningMethodHS256 {
-					return nil, jwt.ErrSignatureInvalid
-				}
-
-				return []byte(secret), nil
-			},
-		)
-
-		if err != nil || !token.Valid {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-				"error": "Invalid or expired token",
-			})
-			return
-		}
-
-		claims, ok := token.Claims.(*jwt.RegisteredClaims)
-
-		if !ok || claims.Subject == "" {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-				"error": "Invalid token claims",
-			})
-			return
-		}
-
-		ctx := c.Request.Context()
-
-		revoked, err := redisClient.Exists(
-			ctx,
-			"revoked:"+tokenString,
-		).Result()
-
+		tokenStr := strings.TrimPrefix(header, "Bearer ")
+		userID, err := ParseToken(tokenStr, secret)
 		if err != nil {
-			c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{
-				"error": "Authentication service unavailable",
-			})
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
 			return
 		}
-
-		if revoked > 0 {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-				"error": "Session revoked",
-			})
-			return
-		}
-
-		c.Set("user_id", claims.Subject)
-		c.Set("token", tokenString)
-		c.Set("token_exp", claims.ExpiresAt.Time)
-
+		c.Set("user_id", userID)
 		c.Next()
 	}
+}
+
+func ParseToken(tokenStr, secret string) (string, error) {
+	token, err := jwt.Parse(tokenStr, func(t *jwt.Token) (interface{}, error) {
+		return []byte(secret), nil
+	})
+	if err != nil || !token.Valid {
+		return "", err
+	}
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		return "", jwt.ErrTokenInvalidClaims
+	}
+	sub, ok := claims["sub"].(string)
+	if !ok {
+		return "", jwt.ErrTokenInvalidClaims
+	}
+	return sub, nil
 }

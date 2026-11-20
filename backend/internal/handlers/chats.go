@@ -1,4 +1,3 @@
-
 package handlers
 
 import (
@@ -6,320 +5,141 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"flexgram-private/backend/internal/models"
+	ws "flexgram-private/backend/internal/websocket"
 )
 
 type ChatHandler struct {
-	DB *pgxpool.Pool
+	DB  *pgxpool.Pool
+	Hub *ws.Hub
 }
 
-func NewChatHandler(db *pgxpool.Pool) *ChatHandler {
-	return &ChatHandler{DB: db}
-}
-
-type CreateChatRequest struct {
-	Type        string   `json:"type"`
-	Title       string   `json:"title"`
-	Description string   `json:"description"`
-	AvatarURL   string   `json:"avatar_url"`
-	UserIDs     []string `json:"user_ids"`
+func NewChatHandler(db *pgxpool.Pool, hub *ws.Hub) *ChatHandler {
+	return &ChatHandler{DB: db, Hub: hub}
 }
 
 func (h *ChatHandler) Create(c *gin.Context) {
 	userID := c.GetString("user_id")
-
-	var req CreateChatRequest
-
+	var req struct {
+		Type      string   `json:"type"`
+		Username  string   `json:"username"`
+		Title     string   `json:"title"`
+		MemberIDs []string `json:"member_ids"`
+	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Invalid request",
-		})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
 		return
 	}
-
-	req.Type = strings.ToLower(strings.TrimSpace(req.Type))
-	req.Title = strings.TrimSpace(req.Title)
-	req.Description = strings.TrimSpace(req.Description)
-
-	if req.Type != "direct" && req.Type != "group" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Chat type must be direct or group",
-		})
-		return
-	}
-
-	if len(req.UserIDs) == 0 || len(req.UserIDs) > 100 {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Invalid participants count",
-		})
-		return
-	}
-
-	if req.Type == "group" && req.Title == "" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Group title is required",
-		})
-		return
-	}
-
-	if len(req.Title) > 100 ||
-		len(req.Description) > 500 ||
-		len(req.AvatarURL) > 2048 {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Chat information is too long",
-		})
-		return
-	}
-
-	participants := make(map[string]bool)
-	participants[userID] = true
-
-	for _, id := range req.UserIDs {
-		id = strings.TrimSpace(id)
-
-		if id != "" {
-			participants[id] = true
-		}
-	}
-
-	if req.Type == "direct" && len(participants) != 2 {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "A direct chat requires exactly two users",
-		})
-		return
-	}
-
-	if req.Type == "group" && len(participants) < 2 {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "A group requires at least two users",
-		})
-		return
-	}
-
-	ids := make([]string, 0, len(participants))
-
-	for id := range participants {
-		ids = append(ids, id)
+	if req.Type == "" {
+		req.Type = "direct"
 	}
 
 	tx, err := h.DB.Begin(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Could not start transaction",
-		})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "DB error"})
 		return
 	}
 	defer tx.Rollback(c.Request.Context())
 
-	// Check that all participants exist.
-	var count int
-
-	err = tx.QueryRow(
-		c.Request.Context(),
-		`SELECT COUNT(*) FROM users WHERE id = ANY($1::uuid[])`,
-		ids,
-	).Scan(&count)
-
-	if err != nil || count != len(ids) {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "One or more users do not exist",
-		})
-		return
-	}
-
-	// Reuse an existing direct chat if one exists.
-	if req.Type == "direct" {
-		var existingID string
-
-		err = tx.QueryRow(
-			c.Request.Context(),
-			`SELECT c.id::text
-			 FROM chats c
-			 JOIN chat_members m ON m.chat_id = c.id
-			 WHERE c.type = 'direct'
-			 AND m.user_id = ANY($1::uuid[])
-			 GROUP BY c.id
-			 HAVING COUNT(DISTINCT m.user_id) = 2
-			 AND (
-			     SELECT COUNT(*)
-			     FROM chat_members all_members
-			     WHERE all_members.chat_id = c.id
-			 ) = 2
-			 LIMIT 1`,
-			ids,
-		).Scan(&existingID)
-
-		if err == nil {
-			if err := tx.Commit(c.Request.Context()); err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{
-					"error": "Could not complete transaction",
-				})
-				return
-			}
-
-			c.JSON(http.StatusOK, gin.H{
-				"chat_id": existingID,
-				"message": "Existing chat found",
-			})
-			return
-		}
-
-		if err != pgx.ErrNoRows {
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"error": "Could not find existing chat",
-			})
-			return
-		}
-	}
-
-	var chat models.Chat
-
-	err = tx.QueryRow(
-		c.Request.Context(),
-		`INSERT INTO chats
-		 (type, title, description, avatar_url, created_by)
-		 VALUES ($1, NULLIF($2, ''), NULLIF($3, ''),
-		         NULLIF($4, ''), $5)
-		 RETURNING id::text, type,
-		 COALESCE(title, ''),
-		 COALESCE(description, ''),
-		 COALESCE(avatar_url, ''),
-		 created_by::text, created_at, updated_at`,
-		req.Type,
-		req.Title,
-		req.Description,
-		req.AvatarURL,
-		userID,
-	).Scan(
-		&chat.ID,
-		&chat.Type,
-		&chat.Title,
-		&chat.Description,
-		&chat.AvatarURL,
-		&chat.CreatedBy,
-		&chat.CreatedAt,
-		&chat.UpdatedAt,
-	)
-
+	var chatID string
+	err = tx.QueryRow(c.Request.Context(), `
+		INSERT INTO chats (type, title, created_by)
+		VALUES ($1, $2, $3) RETURNING id::text
+	`, req.Type, req.Title, userID).Scan(&chatID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Could not create chat",
-		})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not create chat"})
 		return
 	}
 
-	for _, id := range ids {
-		role := "member"
+	_, _ = tx.Exec(c.Request.Context(), `INSERT INTO chat_members (chat_id, user_id, role) VALUES ($1, $2, 'owner')`, chatID, userID)
 
-		if id == userID {
-			role = "owner"
-		}
-
-		_, err = tx.Exec(
-			c.Request.Context(),
-			`INSERT INTO chat_members
-			 (chat_id, user_id, role)
-			 VALUES ($1, $2, $3)`,
-			chat.ID,
-			id,
-			role,
-		)
-
+	if req.Type == "direct" && req.Username != "" {
+		var peerID string
+		err = tx.QueryRow(c.Request.Context(), `SELECT id::text FROM users WHERE username = $1`, strings.ToLower(req.Username)).Scan(&peerID)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"error": "Could not add chat participants",
-			})
+			c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
 			return
+		}
+		var existing string
+		err = tx.QueryRow(c.Request.Context(), `
+			SELECT c.id::text FROM chats c
+			JOIN chat_members m1 ON m1.chat_id = c.id AND m1.user_id = $1
+			JOIN chat_members m2 ON m2.chat_id = c.id AND m2.user_id = $2
+			WHERE c.type = 'direct' LIMIT 1
+		`, userID, peerID).Scan(&existing)
+		if err == nil && existing != "" {
+			c.JSON(http.StatusOK, gin.H{"chat_id": existing, "already_exists": true})
+			return
+		}
+		_, _ = tx.Exec(c.Request.Context(), `INSERT INTO chat_members (chat_id, user_id) VALUES ($1, $2)`, chatID, peerID)
+	}
+
+	for _, mid := range req.MemberIDs {
+		if mid != userID {
+			_, _ = tx.Exec(c.Request.Context(), `INSERT INTO chat_members (chat_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, chatID, mid)
 		}
 	}
 
 	if err := tx.Commit(c.Request.Context()); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Could not save chat",
-		})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Commit failed"})
 		return
 	}
-
-	c.JSON(http.StatusCreated, gin.H{
-		"chat": chat,
-	})
+	c.JSON(http.StatusCreated, gin.H{"chat_id": chatID})
 }
 
 func (h *ChatHandler) List(c *gin.Context) {
 	userID := c.GetString("user_id")
-
-	rows, err := h.DB.Query(
-		c.Request.Context(),
-		`SELECT
-		    ch.id::text,
-		    ch.type,
-		    COALESCE(ch.title, ''),
-		    COALESCE(ch.description, ''),
-		    COALESCE(ch.avatar_url, ''),
-		    ch.created_at,
-		    ch.updated_at,
-		    (
-		        SELECT COUNT(*)
-		        FROM chat_members cm
-		        WHERE cm.chat_id = ch.id
-		    )
-		 FROM chats ch
-		 JOIN chat_members mine ON mine.chat_id = ch.id
-		 WHERE mine.user_id = $1
-		 ORDER BY ch.updated_at DESC`,
-		userID,
-	)
-
+	rows, err := h.DB.Query(c.Request.Context(), `
+		SELECT c.id::text, c.type, COALESCE(c.title,''), COALESCE(c.description,''), COALESCE(c.avatar_url,''),
+		       COALESCE(c.created_by::text,''), c.created_at, c.updated_at
+		FROM chats c
+		JOIN chat_members cm ON cm.chat_id = c.id
+		WHERE cm.user_id = $1
+		ORDER BY c.updated_at DESC
+	`, userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Could not load chats",
-		})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "DB error"})
 		return
 	}
 	defer rows.Close()
 
-	chats := make([]gin.H, 0)
-
+	var chats []models.Chat
 	for rows.Next() {
-		var chat models.Chat
-		var members int
-
-		err := rows.Scan(
-			&chat.ID,
-			&chat.Type,
-			&chat.Title,
-			&chat.Description,
-			&chat.AvatarURL,
-			&chat.CreatedAt,
-			&chat.UpdatedAt,
-			&members,
-		)
-
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"error": "Could not read chats",
-			})
-			return
+		var ch models.Chat
+		if err := rows.Scan(&ch.ID, &ch.Type, &ch.Title, &ch.Description, &ch.AvatarURL, &ch.CreatedBy, &ch.CreatedAt, &ch.UpdatedAt); err != nil {
+			continue
 		}
-
-		chats = append(chats, gin.H{
-			"chat":          chat,
-			"members_count": members,
-		})
+		if ch.Type == "direct" {
+			var peer models.User
+			err := h.DB.QueryRow(c.Request.Context(), `
+				SELECT u.id::text, u.username, u.display_name, u.avatar_url, u.is_online, u.is_verified, u.is_premium
+				FROM users u
+				JOIN chat_members cm ON cm.user_id = u.id
+				WHERE cm.chat_id = $1 AND u.id::text != $2
+				LIMIT 1
+			`, ch.ID, userID).Scan(&peer.ID, &peer.Username, &peer.DisplayName, &peer.AvatarURL, &peer.IsOnline, &peer.IsVerified, &peer.IsPremium)
+			if err == nil {
+				ch.Peer = &peer
+				if ch.Title == "" {
+					ch.Title = peer.DisplayName
+					if ch.Title == "" {
+						ch.Title = "@" + peer.Username
+					}
+				}
+			}
+		}
+		var msg models.Message
+		err := h.DB.QueryRow(c.Request.Context(), `
+			SELECT id::text, chat_id::text, COALESCE(sender_id::text,''), content, message_type, created_at
+			FROM messages WHERE chat_id = $1 AND deleted_at IS NULL
+			ORDER BY created_at DESC LIMIT 1
+		`, ch.ID).Scan(&msg.ID, &msg.ChatID, &msg.SenderID, &msg.Content, &msg.MessageType, &msg.CreatedAt)
+		if err == nil {
+			ch.LastMessage = &msg
+		}
+		chats = append(chats, ch)
 	}
-
-	if err := rows.Err(); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Could not read chats",
-		})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"chats": chats,
-		"count": len(chats),
-	})
+	c.JSON(http.StatusOK, gin.H{"chats": chats})
 }
