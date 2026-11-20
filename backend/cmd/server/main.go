@@ -62,6 +62,7 @@ func main() {
 	giftsH := handlers.NewGiftsHandler(pool)
 	godH := handlers.NewGodHandler(pool)
 	profileH := handlers.NewProfileHandler(pool)
+	extraH := handlers.NewExtraHandler(pool, hub)
 
 	r.GET("/", func(c *gin.Context) {
 		c.JSON(200, gin.H{"name": "FlexGram", "status": "online", "version": "1.0.0"})
@@ -97,6 +98,14 @@ func main() {
 			protected.POST("/god/premium", godH.SetPremium)
 			protected.POST("/god/gift", godH.GrantGift)
 			protected.POST("/god/username", godH.ChangeUsername)
+
+			// Telegram-like extras
+			protected.POST("/chats/:chatID/typing", extraH.Typing)
+			protected.POST("/chats/:chatID/read", extraH.MarkRead)
+			protected.POST("/chats/:chatID/pin", extraH.PinMessage)
+			protected.GET("/chats/:chatID/pinned", extraH.GetPinned)
+			protected.POST("/messages/:messageID/react", extraH.React)
+			protected.POST("/users/online", extraH.SetOnline)
 		}
 	}
 

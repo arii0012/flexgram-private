@@ -13,7 +13,8 @@ class AuthService extends ChangeNotifier {
   bool get isLoggedIn => _token != null;
 
   // Change this to your server address
-  static const String baseUrl = 'http://10.0.2.2:8080'; // Android emulator
+  static const String baseUrl = 'http://localhost:8080'; // Windows / local
+  // static const String baseUrl = 'http://10.0.2.2:8080'; // Android emulator // Android emulator
   // static const String baseUrl = 'http://localhost:8080'; // Windows / Web
   // static const String baseUrl = 'http://YOUR_SERVER_IP:8080';
 

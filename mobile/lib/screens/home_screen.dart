@@ -120,7 +120,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           subtitle: Text(subtitle, maxLines: 1, overflow: TextOverflow.ellipsis),
                           onTap: () {
                             Navigator.push(context, MaterialPageRoute(
-                              builder: (_) => ChatScreen(chatId: c['id'], title: title),
+                              builder: (_) => ChatScreen(chatId: c['id'], title: title, isOnline: peer != null && (peer['is_online'] == true)),
                             )).then((_) => _load());
                           },
                         );
