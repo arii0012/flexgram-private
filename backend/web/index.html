@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+  <title>FlexGram</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0e1621; color: #fff; height: 100vh; overflow: hidden; }
+    #app { display: flex; flex-direction: column; height: 100%; max-width: 480px; margin: 0 auto; background: #0e1621; }
+
+    /* Auth */
+    .auth { display: flex; flex-direction: column; justify-content: center; padding: 32px; height: 100%; gap: 12px; }
+    .auth h1 { text-align: center; font-size: 28px; margin-bottom: 8px; color: #2AABEE; }
+    .auth p { text-align: center; color: #8b9aab; margin-bottom: 20px; font-size: 14px; }
+    input { width: 100%; padding: 14px 16px; border-radius: 12px; border: none; background: #17212b; color: #fff; font-size: 16px; outline: none; }
+    input:focus { box-shadow: 0 0 0 2px #2AABEE; }
+    button { width: 100%; padding: 14px; border: none; border-radius: 12px; background: #2AABEE; color: #fff; font-size: 16px; font-weight: 600; cursor: pointer; }
+    button:active { opacity: 0.85; }
+    button.secondary { background: transparent; border: 1px solid #2AABEE; color: #2AABEE; }
+    .err { color: #ff6b6b; font-size: 13px; text-align: center; min-height: 18px; }
+    .server-row { display: flex; gap: 8px; }
+    .server-row input { flex: 1; }
+
+    /* Header */
+    .header { background: #17212b; padding: 12px 16px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid #0e1621; }
+    .header .back { background: none; border: none; color: #2AABEE; font-size: 22px; cursor: pointer; width: auto; padding: 0 4px; }
+    .header .title { flex: 1; font-weight: 600; font-size: 17px; }
+    .header .sub { font-size: 12px; color: #8b9aab; font-weight: 400; }
+    .header .btn { background: none; border: none; color: #8b9aab; font-size: 20px; width: auto; padding: 4px; cursor: pointer; }
+
+    /* Chat list */
+    .list { flex: 1; overflow-y: auto; }
+    .chat-item { display: flex; gap: 12px; padding: 12px 16px; cursor: pointer; border-bottom: 1px solid #17212b; }
+    .chat-item:active { background: #17212b; }
+    .avatar { width: 48px; height: 48px; border-radius: 50%; background: #2AABEE; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 18px; flex-shrink: 0; }
+    .chat-meta { flex: 1; min-width: 0; }
+    .chat-top { display: flex; justify-content: space-between; margin-bottom: 4px; }
+    .chat-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .chat-time { font-size: 12px; color: #8b9aab; flex-shrink: 0; }
+    .chat-last { font-size: 14px; color: #8b9aab; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .fab { position: absolute; right: 20px; bottom: 24px; width: 56px; height: 56px; border-radius: 50%; background: #2AABEE; border: none; color: #fff; font-size: 24px; cursor: pointer; box-shadow: 0 4px 12px rgba(42,171,238,0.4); }
+    .empty { text-align: center; padding: 60px 24px; color: #8b9aab; }
+
+    /* Messages */
+    .messages { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 4px; }
+    .bubble { max-width: 80%; padding: 8px 12px; border-radius: 14px; font-size: 15px; line-height: 1.35; word-break: break-word; }
+    .bubble.me { align-self: flex-end; background: #2b5278; border-bottom-right-radius: 4px; }
+    .bubble.them { align-self: flex-start; background: #182533; border-bottom-left-radius: 4px; }
+    .bubble .time { font-size: 11px; color: rgba(255,255,255,0.45); text-align: right; margin-top: 2px; }
+
+    /* Input */
+    .input-bar { display: flex; gap: 8px; padding: 8px 12px; background: #17212b; align-items: flex-end; }
+    .input-bar input { flex: 1; border-radius: 20px; padding: 10px 16px; }
+    .input-bar button { width: 44px; height: 44px; border-radius: 50%; padding: 0; font-size: 18px; flex-shrink: 0; }
+
+    .hidden { display: none !important; }
+    .screen { display: flex; flex-direction: column; height: 100%; position: relative; }
+  </style>
+</head>
+<body>
+<div id="app">
+
+  <!-- AUTH -->
+  <div id="screen-auth" class="auth screen">
+    <h1>FlexGram</h1>
+    <p>Приватный мессенджер</p>
+    <div class="server-row">
+      <input id="server" placeholder="Адрес сервера" value="http://localhost:8080" />
+    </div>
+    <input id="username" placeholder="Username" autocomplete="username" />
+    <input id="password" type="password" placeholder="Пароль" autocomplete="current-password" />
+    <div class="err" id="auth-err"></div>
+    <button id="btn-login">Войти</button>
+    <button class="secondary" id="btn-register">Регистрация</button>
+  </div>
+
+  <!-- CHATS -->
+  <div id="screen-chats" class="screen hidden">
+    <div class="header">
+      <div class="title">FlexGram</div>
+      <button class="btn" id="btn-logout" title="Выйти">⏻</button>
+    </div>
+    <div class="list" id="chat-list"></div>
+    <button class="fab" id="btn-new">✏️</button>
+  </div>
+
+  <!-- CHAT -->
+  <div id="screen-chat" class="screen hidden">
+    <div class="header">
+      <button class="back" id="btn-back">‹</button>
+      <div>
+        <div class="title" id="chat-title">Chat</div>
+        <div class="sub" id="chat-sub"></div>
+      </div>
+    </div>
+    <div class="messages" id="messages"></div>
+    <div class="input-bar">
+      <input id="msg-input" placeholder="Сообщение" />
+      <button id="btn-send">➤</button>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let token = localStorage.getItem('fg_token');
+let user = JSON.parse(localStorage.getItem('fg_user') || 'null');
+let server = localStorage.getItem('fg_server') || 'http://localhost:8080';
+let currentChatId = null;
+let pollTimer = null;
+
+$('server').value = server;
+
+function api(path, opts = {}) {
+  const url = server.replace(/\/$/, '') + path;
+  const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
+  if (token) headers['Authorization'] = 'Bearer ' + token;
+  return fetch(url, { ...opts, headers }).then(async (r) => {
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+    return data;
+  });
+}
+
+function show(id) {
+  ['screen-auth', 'screen-chats', 'screen-chat'].forEach((s) => $(s).classList.add('hidden'));
+  $(id).classList.remove('hidden');
+}
+
+function saveAuth(t, u) {
+  token = t; user = u;
+  localStorage.setItem('fg_token', t);
+  localStorage.setItem('fg_user', JSON.stringify(u));
+  localStorage.setItem('fg_server', server);
+}
+
+async function doAuth(register) {
+  server = $('server').value.trim().replace(/\/$/, '');
+  const username = $('username').value.trim();
+  const password = $('password').value;
+  $('auth-err').textContent = '';
+  try {
+    const path = register ? '/api/auth/register' : '/api/auth/login';
+    const data = await api(path, {
+      method: 'POST',
+      body: JSON.stringify({ username, password }),
+    });
+    saveAuth(data.access_token, data.user);
+    await openChats();
+  } catch (e) {
+    $('auth-err').textContent = e.message;
+  }
+}
+
+$('btn-login').onclick = () => doAuth(false);
+$('btn-register').onclick = () => doAuth(true);
+
+async function openChats() {
+  show('screen-chats');
+  stopPoll();
+  try {
+    const data = await api('/api/chats');
+    const list = $('chat-list');
+    list.innerHTML = '';
+    const chats = data.chats || [];
+    if (!chats.length) {
+      list.innerHTML = '<div class="empty">Нет чатов.<br>Нажми ✏️ и введи username друга</div>';
+      return;
+    }
+    chats.forEach((c) => {
+      const peer = c.peer || {};
+      const name = c.title || peer.display_name || peer.username || 'Chat';
+      const last = (c.last_message && c.last_message.content) || '';
+      const letter = (name[0] || '?').toUpperCase();
+      const div = document.createElement('div');
+      div.className = 'chat-item';
+      div.innerHTML = `
+        <div class="avatar">${letter}</div>
+        <div class="chat-meta">
+          <div class="chat-top"><span class="chat-name">${esc(name)}</span></div>
+          <div class="chat-last">${esc(last)}</div>
+        </div>`;
+      div.onclick = () => openChat(c.id, name);
+      list.appendChild(div);
+    });
+  } catch (e) {
+    if (String(e.message).includes('401') || String(e.message).includes('token')) {
+      logout();
+    } else {
+      $('chat-list').innerHTML = '<div class="empty">Ошибка: ' + esc(e.message) + '<br>Сервер запущен?</div>';
+    }
+  }
+}
+
+function esc(s) {
+  return String(s || '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+async function openChat(id, title) {
+  currentChatId = id;
+  $('chat-title').textContent = title;
+  $('chat-sub').textContent = '';
+  show('screen-chat');
+  await loadMessages();
+  startPoll();
+}
+
+async function loadMessages() {
+  if (!currentChatId) return;
+  try {
+    const data = await api('/api/chats/' + currentChatId + '/messages');
+    const box = $('messages');
+    const wasBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+    box.innerHTML = '';
+    (data.messages || []).forEach((m) => {
+      const me = m.sender_id === (user && user.id);
+      const div = document.createElement('div');
+      div.className = 'bubble ' + (me ? 'me' : 'them');
+      const t = m.created_at ? new Date(m.created_at).toLocaleTimeString('ru', { hour: '2-digit', minute: '2-digit' }) : '';
+      div.innerHTML = esc(m.content) + '<div class="time">' + t + (me ? ' ✓✓' : '') + '</div>';
+      box.appendChild(div);
+    });
+    if (wasBottom || true) box.scrollTop = box.scrollHeight;
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+function startPoll() {
+  stopPoll();
+  pollTimer = setInterval(loadMessages, 2000);
+}
+function stopPoll() {
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = null;
+}
+
+$('btn-send').onclick = sendMsg;
+$('msg-input').onkeydown = (e) => { if (e.key === 'Enter') sendMsg(); };
+
+async function sendMsg() {
+  const text = $('msg-input').value.trim();
+  if (!text || !currentChatId) return;
+  $('msg-input').value = '';
+  try {
+    await api('/api/chats/' + currentChatId + '/messages', {
+      method: 'POST',
+      body: JSON.stringify({ content: text }),
+    });
+    await loadMessages();
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+$('btn-back').onclick = () => { stopPoll(); openChats(); };
+$('btn-logout').onclick = logout;
+
+function logout() {
+  token = null; user = null;
+  localStorage.removeItem('fg_token');
+  localStorage.removeItem('fg_user');
+  stopPoll();
+  show('screen-auth');
+}
+
+$('btn-new').onclick = async () => {
+  const username = prompt('Username друга (без @):');
+  if (!username) return;
+  try {
+    const data = await api('/api/chats', {
+      method: 'POST',
+      body: JSON.stringify({ type: 'direct', username: username.trim().replace('@', '') }),
+    });
+    await openChats();
+    if (data.chat_id) openChat(data.chat_id, '@' + username.trim().replace('@', ''));
+  } catch (e) {
+    alert(e.message);
+  }
+};
+
+// init
+if (token && user) openChats();
+else show('screen-auth');
+</script>
+</body>
+</html>

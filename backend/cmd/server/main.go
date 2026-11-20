@@ -64,6 +64,15 @@ func main() {
 	profileH := handlers.NewProfileHandler(pool)
 	extraH := handlers.NewExtraHandler(pool, hub)
 
+	// Web UI at /app/
+	for _, webDir := range []string{"/app/web", "./web", "../web"} {
+		if st, err := os.Stat(webDir); err == nil && st.IsDir() {
+			r.Static("/app", webDir)
+			log.Println("Web UI: /app/ from", webDir)
+			break
+		}
+	}
+
 	r.GET("/", func(c *gin.Context) {
 		c.JSON(200, gin.H{"name": "FlexGram", "status": "online", "version": "1.0.0"})
 	})
