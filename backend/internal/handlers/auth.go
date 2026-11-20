@@ -1,4 +1,3 @@
-
 package handlers
 
 import (
@@ -16,7 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
 
-	"nova-messenger/backend/internal/models"
+	"flexgram-private/backend/internal/models"
 )
 
 type AuthHandler struct {
