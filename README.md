@@ -1,28 +1,46 @@
-# FlexGram Private
+# FlexGram — офлайн копия Telegram
 
-Приватный офлайн-клон Telegram для личного использования, контента и розыгрышей.  
-Все данные хранятся **только локально** (localStorage). Никаких серверов Telegram.
+Полностью автономный мессенджер в стиле Telegram.  
+**Интернет не нужен.** Все данные хранятся только на устройстве.
 
-## Стек
+Работает на:
+- Телефоне (Android) → `.apk`
+- Компьютере (Windows) → `.exe`
+- Браузере (для теста)
 
-- **React 18 + Vite + TypeScript**
-- **Zustand** (состояние + persist)
-- **Capacitor 6** → Android APK
-- **Electron** → Windows / Linux / macOS
-- **GitHub Actions** → автоматическая сборка
+---
 
-## Возможности
+## Как получить готовые приложения через GitHub (рекомендуется)
 
-- UI в стиле Telegram (тёмная/светлая тема, папки, stories, пузыри, reply, long-press меню)
-- Голосовые сообщения (симуляция), подарки, Stars, Premium
-- **Director Mode** (Режиссёр переписки): двойной клик по шапке чата → писать от имени собеседника, системные сообщения, накрутка просмотров
-- Локальный кошелёк (TON / USDT / Notcoin)
-- Имитация звонков
-- Секретные чаты
-- Экспорт/импорт бэкапа JSON
-- Деcoy-аккаунт (демо-режим)
+### 1. Создай репозиторий на GitHub
+- Зайди на github.com → New repository
+- Название: `flexgram`
+- Создай пустой репозиторий
 
-## Быстрый старт
+### 2. Залей этот проект
+Самый простой способ:
+1. На странице репозитория нажми **uploading an existing file**
+2. Перетащи **всю папку** `flexgram` (все файлы внутри)
+3. Нажми Commit changes
+
+### 3. Запусти сборку
+1. Перейди во вкладку **Actions**
+2. Выбери workflow **Build FlexGram**
+3. Нажми **Run workflow** → Run workflow
+4. Подожди 5–15 минут
+
+### 4. Скачай готовые файлы
+После окончания сборки:
+- Внизу workflow появятся **Artifacts**
+- Или во вкладке **Releases** (draft)
+
+Там будут:
+- `windows-exe` → файл `.exe` для компьютера
+- `android-apk` / web → для телефона
+
+---
+
+## Как запустить локально (для теста)
 
 ```bash
 npm install
@@ -31,47 +49,33 @@ npm run dev
 
 Открой http://localhost:5173
 
-### Desktop (Electron)
+### Сборка у себя на компьютере
 
 ```bash
-npm run electron:dev          # разработка
-npm run electron:build:win    # .exe
-```
+# Windows .exe
+npm run electron:build:win
 
-### Android (Capacitor)
-
-```bash
+# Просто веб-версия
 npm run build
-npx cap add android
-npx cap sync android
-npx cap open android
-# В Android Studio: Build → Build APK
 ```
 
-## GitHub Actions
+---
 
-При пуше в `main` или ручном запуске workflow:
+## Что умеет
 
-1. Собирает web-дистрибутив
-2. Готовит Android-проект (APK — при наличии SDK в runners)
-3. Собирает Windows `.exe` через electron-builder
-4. Создаёт draft Release с артефактами
+- Внешний вид как у Telegram (тёмная/светлая тема)
+- Чаты, папки, stories, непрочитанные
+- Сообщения, ответы, реакции, голосовые
+- Подарки + Stars + Premium
+- Режим «Режиссёр» (писать от имени собеседника)
+- Фейковые уведомления
+- Локальный кошелёк
+- Имитация звонков
+- Всё сохраняется локально
 
-## Структура
-
-```
-src/
-  store/useStore.ts     # всё состояние + local persist
-  screens/              # Auth, Main, Chat, Settings, Gifts, Call
-  types/                # TypeScript-модели
-electron/main.cjs       # Electron entry
-capacitor.config.ts
-.github/workflows/build.yml
-```
+---
 
 ## Важно
 
-Это **не** клиент Telegram и **не** подключается к каким-либо серверам.  
-Предназначен для локальных сценариев, демо, контента и безопасных розыгрышей.
-
-MIT License
+Это **не** настоящий Telegram и **не** подключается ни к каким серверам.  
+Сделано для личного использования, контента и розыгрышей.
