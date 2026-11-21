@@ -1,8 +1,0 @@
-
-.git
-.env
-.env.*
-tmp/
-testdata/
-storage/*
-!storage/.gitkeep

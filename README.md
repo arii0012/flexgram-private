@@ -1,145 +1,77 @@
-# FlexGram — Private Messenger
+# FlexGram Private
 
-Независимый кроссплатформенный мессенджер (приватный клон Telegram).
-Собственный бэкенд, никакой связи с серверами Telegram.
+Приватный офлайн-клон Telegram для личного использования, контента и розыгрышей.  
+Все данные хранятся **только локально** (localStorage). Никаких серверов Telegram.
 
 ## Стек
 
-- **Backend**: Go + Gin + WebSocket (gorilla/websocket)
-- **DB**: PostgreSQL + Redis
-- **Client**: Flutter (Android / Windows / Web)
+- **React 18 + Vite + TypeScript**
+- **Zustand** (состояние + persist)
+- **Capacitor 6** → Android APK
+- **Electron** → Windows / Linux / macOS
+- **GitHub Actions** → автоматическая сборка
 
 ## Возможности
 
-- Регистрация / логин по username + пароль
-- Личные чаты, поиск пользователей по @username
-- Real-time сообщения через WebSocket
-- Профиль с градиентной шапкой, Premium, галочка верификации
-- Магазин коллекционных подарков + баланс Stars
-- **God Mode** (Developer Panel) — выдача себе Stars, Premium, подарков, любых username
+- UI в стиле Telegram (тёмная/светлая тема, папки, stories, пузыри, reply, long-press меню)
+- Голосовые сообщения (симуляция), подарки, Stars, Premium
+- **Director Mode** (Режиссёр переписки): двойной клик по шапке чата → писать от имени собеседника, системные сообщения, накрутка просмотров
+- Локальный кошелёк (TON / USDT / Notcoin)
+- Имитация звонков
+- Секретные чаты
+- Экспорт/импорт бэкапа JSON
+- Деcoy-аккаунт (демо-режим)
 
-## Быстрый старт (сервер)
-
-```bash
-# 1. Клонировать
-git clone https://github.com/arii0012/flexgram-private.git
-cd flexgram-private
-
-# 2. Создать .env
-cp .env.example .env
-# Отредактируйте .env — поставьте длинные пароли и JWT_SECRET
-
-# 3. Запустить всё одной командой
-docker compose up -d --build
-
-# Сервер будет на http://localhost:8080
-```
-
-Проверка:
-```bash
-curl http://localhost:8080/
-```
-
-## Flutter-клиент
+## Быстрый старт
 
 ```bash
-cd mobile
-flutter pub get
-
-# Android (эмулятор)
-# В lib/services/auth.dart уже стоит baseUrl = 'http://10.0.2.2:8080'
-flutter run
-
-# Windows
-# Раскомментируйте baseUrl = 'http://localhost:8080' в auth.dart
-flutter run -d windows
-
-# Сборка APK
-flutter build apk --release
-# Файл: build/app/outputs/flutter-apk/app-release.apk
-
-# Сборка Windows EXE
-flutter build windows --release
+npm install
+npm run dev
 ```
 
-### Важно для двух устройств
+Открой http://localhost:5173
 
-Если хотите, чтобы телефон и ПК писали друг другу:
+### Desktop (Electron)
 
-1. Узнайте IP вашего компьютера в локальной сети (например `192.168.1.50`).
-2. В `mobile/lib/services/auth.dart` поставьте:
-   ```dart
-   static const String baseUrl = 'http://192.168.1.50:8080';
-   ```
-3. В `docker-compose.yml` порты уже проброшены.
-4. Убедитесь, что файрвол разрешает входящие на 8080.
+```bash
+npm run electron:dev          # разработка
+npm run electron:build:win    # .exe
+```
 
-## God Mode
+### Android (Capacitor)
 
-В приложении: меню → **Developer Panel**.
+```bash
+npm run build
+npx cap add android
+npx cap sync android
+npx cap open android
+# В Android Studio: Build → Build APK
+```
 
-Можно:
-- Накинуть себе любое количество Stars
-- Выдать Premium + галочку
-- Сменить username на короткий (3–4 символа)
-- Выдать себе любой подарок с кастомным номером
+## GitHub Actions
+
+При пуше в `main` или ручном запуске workflow:
+
+1. Собирает web-дистрибутив
+2. Готовит Android-проект (APK — при наличии SDK в runners)
+3. Собирает Windows `.exe` через electron-builder
+4. Создаёт draft Release с артефактами
 
 ## Структура
 
 ```
-├── backend/                 # Go сервер
-│   ├── cmd/server/main.go
-│   ├── internal/
-│   │   ├── handlers/        # auth, chats, messages, gifts, god
-│   │   ├── websocket/       # real-time hub
-│   │   ├── models/
-│   │   └── database/migrations/
-│   └── Dockerfile
-├── mobile/                  # Flutter клиент
-│   └── lib/
-│       ├── screens/         # login, home, chat, profile, gifts, god
-│       └── services/        # api + auth
-├── docker-compose.yml
-└── README.md
+src/
+  store/useStore.ts     # всё состояние + local persist
+  screens/              # Auth, Main, Chat, Settings, Gifts, Call
+  types/                # TypeScript-модели
+electron/main.cjs       # Electron entry
+capacitor.config.ts
+.github/workflows/build.yml
 ```
 
-## API (кратко)
+## Важно
 
-| Method | Path | Описание |
-|--------|------|----------|
-| POST | /api/auth/register | Регистрация |
-| POST | /api/auth/login | Вход |
-| GET  | /api/users/me | Профиль |
-| GET  | /api/users/search?q= | Поиск |
-| POST | /api/chats | Создать чат |
-| GET  | /api/chats | Список чатов |
-| POST | /api/chats/:id/messages | Отправить сообщение |
-| GET  | /api/chats/:id/messages | История |
-| GET  | /api/gifts/shop | Магазин |
-| POST | /api/gifts/buy | Купить подарок |
-| POST | /api/god/stars | Накинуть Stars |
-| POST | /api/god/premium | Premium + verified |
-| GET  | /ws?token=... | WebSocket |
+Это **не** клиент Telegram и **не** подключается к каким-либо серверам.  
+Предназначен для локальных сценариев, демо, контента и безопасных розыгрышей.
 
-## Лицензия
-
-MIT
-
-## Автосборка на GitHub
-
-При каждом пуше в `main` GitHub Actions автоматически:
-
-1. Собирает Go-сервер (Linux + Windows)
-2. Собирает Android APK
-3. Создаёт **Release** с готовыми файлами для скачивания
-
-### Как пользоваться
-
-1. Запушь код в репозиторий
-2. Открой вкладку **Actions** — увидишь сборку
-3. После успеха открой вкладку **Releases** — там будут:
-   - `flexgram-android.apk`
-   - `flexgram-server-linux`
-   - `flexgram-server-windows.exe`
-
-Можно также запустить сборку вручную: **Actions → Build FlexGram → Run workflow**.
+MIT License

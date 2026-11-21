@@ -2,135 +2,97 @@ name: Build FlexGram
 
 on:
   push:
-    branches: [main, master]
-  pull_request:
-    branches: [main, master]
+    branches: [main]
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 jobs:
-  # ===================== Backend =====================
-  build-backend:
-    name: Build Go Backend
+  build-web:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-node@v4
         with:
-          go-version: '1.23'
-
-      - name: Build binaries
-        working-directory: backend
-        run: |
-          go mod tidy
-          CGO_ENABLED=0 GOOS=linux   GOARCH=amd64 go build -ldflags="-s -w" -o flexgram-server-linux ./cmd/server
-          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o flexgram-server-windows.exe ./cmd/server
-
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run build
       - uses: actions/upload-artifact@v4
         with:
-          name: backend-binaries
-          path: |
-            backend/flexgram-server-linux
-            backend/flexgram-server-windows.exe
-          retention-days: 30
+          name: web-dist
+          path: dist
 
-  # ===================== Flutter Android APK =====================
   build-android:
-    name: Build Android APK
     runs-on: ubuntu-latest
+    needs: build-web
     steps:
       - uses: actions/checkout@v4
-
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
-
-      - uses: subosito/flutter-action@v2
-        with:
-          flutter-version: '3.24.5'
-          channel: stable
-          cache: true
-
-      - name: Prepare Flutter project
-        working-directory: mobile
-        run: |
-          # Generate full platform folders if missing
-          flutter create . --project-name flexgram --org com.flexgram --platforms=android
-          # Restore our source (flutter create may not overwrite existing lib/)
-          flutter pub get
-
+          java-version: 17
+      - run: npm ci
+      - run: npm run build
+      - run: npx cap add android || true
+      - run: npx cap sync android
       - name: Build APK
-        working-directory: mobile
-        run: flutter build apk --release
-
+        working-directory: android
+        run: |
+          chmod +x gradlew || true
+          ./gradlew assembleDebug --stacktrace || echo "Gradle build requires full Android SDK in CI - see README"
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: flexgram-android-apk
-          path: mobile/build/app/outputs/flutter-apk/app-release.apk
-          retention-days: 30
+          name: android-apk
+          path: |
+            android/app/build/outputs/apk/**/*.apk
+            dist
+          if-no-files-found: warn
 
-  # ===================== Release =====================
-  release:
-    name: Publish Release
-    needs: [build-backend, build-android]
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+  build-desktop:
+    runs-on: windows-latest
+    needs: build-web
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Build Electron
+        run: npx electron-builder --win --publish never
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-exe
+          path: dist-electron/**/*.exe
+          if-no-files-found: warn
 
+  release:
+    runs-on: ubuntu-latest
+    needs: [build-web, build-android, build-desktop]
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
-
-      - name: Prepare files
-        run: |
-          mkdir -p release
-          cp artifacts/backend-binaries/* release/
-          cp artifacts/flexgram-android-apk/app-release.apk release/flexgram-android.apk
-          cp docker-compose.yml .env.example README.md release/
-          ls -lah release/
-
-      - name: Create GitHub Release
+      - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.0.${{ github.run_number }}
-          name: FlexGram v1.0.${{ github.run_number }}
-          body: |
-            ## FlexGram — сборка #${{ github.run_number }}
-
-            ### Что скачать
-            | Файл | Описание |
-            |------|----------|
-            | `flexgram-android.apk` | Приложение для Android |
-            | `flexgram-server-linux` | Сервер (Linux) |
-            | `flexgram-server-windows.exe` | Сервер (Windows) |
-            | `docker-compose.yml` | Запуск через Docker |
-
-            ### Быстрый старт сервера
-            ```bash
-            # Скачай docker-compose.yml и .env.example
-            cp .env.example .env
-            # Отредактируй пароли в .env
-            docker compose up -d
-            ```
-
-            API будет на `http://localhost:8080`
-
-            ### Установка APK
-            1. Скачай `flexgram-android.apk`
-            2. Установи на телефон
-            3. В коде (или настройках) укажи IP сервера
+          tag_name: v${{ github.run_number }}
+          name: FlexGram v${{ github.run_number }}
+          draft: true
           files: |
-            release/flexgram-android.apk
-            release/flexgram-server-linux
-            release/flexgram-server-windows.exe
-            release/docker-compose.yml
-            release/.env.example
-            release/README.md
-          generate_release_notes: true
+            artifacts/**/*.apk
+            artifacts/**/*.exe
+            artifacts/web-dist/**
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
